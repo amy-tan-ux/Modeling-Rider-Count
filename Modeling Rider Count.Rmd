@@ -1,0 +1,585 @@
+---
+html_document: default
+author: "Amy Tan"
+output:
+  word_document: default
+  html_document:
+    df_print: paged
+title: "Rider Count Prediction"
+pdf_document: default
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r, include=FALSE}
+# Loading the Libraries 
+library(factoextra)           # factoextra helps pick out the best PC
+library(psych)
+library(glmnet)
+library(pls)
+library(colourvalues)
+
+set.seed(3)
+```
+
+```{r}
+
+# Loading the Dataset
+data<-read.csv("hourlybikes.csv")
+
+  # Data Variates
+
+	# - instant: record index
+	# - dteday : date
+	# - season : season (1:springer, 2:summer, 3:fall, 4:winter)
+	# - yr : year (0: 2011, 1:2012)
+	# - mnth : month ( 1 to 12)
+	# - hr : hthe (0 to 23)
+	# - holiday : weather day is holiday or not (extracted from http://dchr.dc.gov/page/holiday-schedule)
+	# - weekday : day of the week
+	# - workingday : if day is neither weekend nor holiday is 1, otherwise is 0.
+	# + weathersit : 
+	# 	- 1: Clear, Few clouds, Partly cloudy, Partly cloudy
+	# 	- 2: Mist + Cloudy, Mist + Broken clouds, Mist + Few clouds, Mist
+	# 	- 3: Light Snow, Light Rain + Thunderstorm + Scattered clouds, Light Rain + Scattered clouds
+	# 	- 4: Heavy Rain + Ice Pallets + Thunderstorm + Mist, Snow + Fog
+	# - temp : Normalized temperature in Celsius. The values are divided to 41 (max)
+	# - atemp: Normalized feeling temperature in Celsius. The values are divided to 50 (max)
+	# - hum: Normalized humidity. The values are divided to 100 (max)
+	# - windspeed: Normalized wind speed. The values are divided to 67 (max)
+	# - casual: count of casual users
+	# - registered: count of registered users
+	# - cnt: count of total rental bikes including both casual and registered
+
+# Initializing the explanatory variables
+season <-data$season
+yr <-data$yr
+month <-data$mnth
+hr <-data$hr
+holiday <-data$holiday
+weekday <-data$weekday
+atemp <-data$atemp     
+temp <-data$temp
+workingday <- data$workingday
+weathersit <- data$weathersit
+windspeed <- data$windspeed
+humidity <- data$hum
+
+# Changing seasons, month and time into categorical variables
+spring <-ifelse(season==1,1,0)   # Seasons
+summer <-ifelse(season==2,1,0)
+fall <-ifelse(season==3,1,0)
+
+feb <-ifelse(month==2,1,0)      # Months
+mar <-ifelse(month==3,1,0)
+apr <-ifelse(month==4,1,0)
+may <-ifelse(month==5,1,0)
+jun <-ifelse(month==6,1,0)
+jul <-ifelse(month==7,1,0)
+aug <-ifelse(month==8,1,0)
+sep <-ifelse(month==9,1,0)
+oct <-ifelse(month==10,1,0)
+nov <-ifelse(month==11,1,0)
+dec <-ifelse(month==12,1,0)
+
+
+oneam <-ifelse(hr==1,1,0)      # Time of Day
+twoam <-ifelse(hr==2,1,0)
+threeam <-ifelse(hr==3,1,0)
+fouram <-ifelse(hr==4,1,0)
+fiveam <-ifelse(hr==5,1,0)
+sixam <-ifelse(hr==6,1,0)
+sevenam <-ifelse(hr==7,1,0)
+eightam <-ifelse(hr==8,1,0)
+nineam <-ifelse(hr==9,1,0)
+tenam <-ifelse(hr==10,1,0)
+elevenam <-ifelse(hr==11,1,0)
+noon <-ifelse(hr==12,1,0)
+onepm <-ifelse(hr==13,1,0)
+twopm <-ifelse(hr==14,1,0)
+threepm <-ifelse(hr==15,1,0)
+fourpm <-ifelse(hr==16,1,0)
+fivepm <-ifelse(hr==17,1,0)
+sixpm <-ifelse(hr==18,1,0)
+sevenpm <-ifelse(hr==19,1,0)
+eightpm <-ifelse(hr==20,1,0)
+ninepm <-ifelse(hr==21,1,0)
+tenpm <-ifelse(hr==22,1,0)
+elevenpm <-ifelse(hr==23,1,0)
+
+rider_count <- data$cnt     # Response Variable
+
+revised_data <- data.frame(rider_count, yr, holiday, weekday, 
+                           atemp, temp, workingday, 
+                           weathersit, windspeed, humidity,
+                           spring, summer, fall,       
+                           # categorical variables for seasons
+                           feb, mar, apr, may, jun, jul, aug,
+                           sep, oct, nov, dec,         
+                           # categorical variables for Month
+                           oneam, twoam, threeam, fouram, fiveam, sixam, sevenam, 
+                           eightam, nineam, tenam, elevenam, noon, 
+                           onepm, twopm, threepm, fourpm, fivepm, sixpm, sevenpm,
+                           eightpm, ninepm, tenpm, elevenpm
+                           # categorical variables for Hours of the Day
+                           )
+
+# Accessing the explanatory variables for better analysis
+revised_reg <- lm(rider_count~., data= revised_data)
+summary(revised_reg)
+
+# Checking for Multicollinearity
+summary(lm(data$atemp~ data$temp))
+summary(lm(data$weekday~ data$workingday))
+
+```
+
+When loading the data I wanted to change the data into something I can use to obtain a better analysis. I took the initiative to take out the variables "instant", "dteday", "casual" and "registered". Leaving in instant and dteday would result in a time series and the casual and registered counts are subsets of rider counts "cnt". I also switched in categorical variables for season, month and hr. I decided to leave weathersit as a numeric value because it can be viewed as a spectrum of weather harshness. After regressing the variables together, I find that month is not significant to the rider count.The reason could be the relationship it has with season. I also find that temp and atemp are linearly correlated. Along with weekday and workingday. After taking everything into consideration I created a better data set to work with.
+
+```{r}
+best_data <- data.frame(rider_count, yr, holiday, weekday, temp, 
+                           weathersit, windspeed, humidity,
+                           spring, summer, fall,       
+                           # categorical variables for seasons
+                           oneam, twoam, threeam, fouram, fiveam, sixam, sevenam, 
+                           eightam, nineam, tenam, elevenam, noon, 
+                           onepm, twopm, threepm, fourpm, fivepm, sixpm, sevenpm,
+                           eightpm, ninepm, tenpm, elevenpm
+                           # categorical variables for Hours of the Day
+                           )
+
+better_reg <- lm(rider_count~., data=best_data)
+summary(better_reg)
+```
+
+
+```{r}
+# PC Analysis of best_data
+best.hourly.pca <-prcomp(best_data[,-1],center = TRUE,scale. = TRUE) 
+
+# Plotting the variance
+par(mar = c(3.1, 3.1, 1.1, 1.1), mgp = 2:0)
+plot(best.hourly.pca, main = "Best_Data PCA")
+mtext(side = 1, "Rider Counts PCs", line = 1, font = 2)
+
+```
+
+From this first screeplot I find that in PC1-6 captures the most variation and information as the PCs beyond those have variances that levels off and gives you around the same information.
+
+```{r}
+# Using the principle components for each data set, I can look at the rotations
+round(best.hourly.pca$rotation[,1:33],2)
+```
+
+Looking at the rotations vectors and values I find the dominant rotation values for each PC is...
+
+PC1: -temp
+PC1 is for cooler temperature weathers. PC1 may be for riders who ride in cooler temperatures. The cooler temperatures might attract riders who would otherwise walk in a cooler day but chooses to ride a bike instead. 
+
+PC2: -humidity
+PC2 is for less humid weathers. PC2 may be for riders who ride bikes during times with more windspeed and less humidity.
+
+PC3: spring, -summer, fall
+PC3 counts for the seasonal effect on riders. PC3 may be for seasonal riders who ride less during the summer. Maybe for students who use the bikes to ride to school.
+
+PC4: weathersit
+PC4 is for harsher and less ideal weathers. PC4 may be for riders who ride bikes during times where the weather is harder to walk in. (ie. harsher weathers and windy days)
+
+PC5: -holiday, weekday
+PC5 is for working days vs holidays. PC5 may be for employees and workers who rides the bikes to work during the week. Since I took out workday, weekday suggests work day and with the negative holiday rotation value this set of riders only use the bikes to ride to work.
+
+PC6: -noon, -onepm, sevenpm, -elevenpm
+PC6 is time component. PC6 may be a group of regular riders that uses the bikes at similar and specific times. 
+
+These rotations suggests the different factors that may affect the rider count. However PC6 seems suspicious because it only uses certain parts of the categorical variable hr.  
+
+```{r}
+
+# screeplot
+screeplot(best.hourly.pca, type = "l", npcs = 33, main = "33 PC's")
+abline(h = 1, col="red", lty=5)
+legend("topright", legend=c("Eigenvalue = 1"),
+col=c("red"), lty=5, cex=0.6)
+
+```
+
+This screeplot illustrates how PC1-6 make up most of the variation before it levels off.
+
+
+```{r}
+
+#PCA components
+best.hourly.components <- predict(best.hourly.pca)[, 1:5]
+best.regression <- lm(rider_count ~ ., data = as.data.frame(best.hourly.components))
+
+
+# Using AICc and BIC to choose the number of factors
+full.pca <- predict(best.hourly.pca)
+pca <- as.data.frame(full.pca) # new predict
+
+kfits <- lapply(1:33, function(k){lm(rider_count~ .,data= pca[, 1:k, drop = FALSE])})
+
+n <- nrow(pca)
+
+m2ll <- function(reg2) { n * (1 + log(2 * pi) + log(mean(reg2$resid^2))) }
+aicc <- function(reg) { m2ll(reg) / n + (2 * reg$rank) / (n - reg$rank - 1) }
+bic <- function(reg) { (m2ll(reg) + (log(n) * reg$rank)) / n }
+
+
+# Plots looks suspiciously weird.
+aic_vec <- sapply(kfits, aicc)
+#which.min(aic_vec)
+
+aic_vec <- sapply(kfits, aicc)
+#which.min(aic_vec)
+
+bic_vec <- sapply(kfits, bic)
+#which.min(bic_vec)
+
+# Creating a Lasso Regression
+cvlassoPC <- cv.glmnet(x=full.pca, y= rider_count, nfold = 20)
+drop(coef(cvlassoPC))
+# PC number 33 is very correlated
+
+all_coef <- cbind(coef(cvlassoPC, s = "lambda.min"), coef(cvlassoPC),
+                  c(coef(kfits[[33]]), rep(0, 13)),
+                  c(coef(kfits[[33]]), rep(0, 17)))
+colnames(all_coef) <- c("lambda.min", "1se", "AICc", "BIC")
+
+all_coef # Matrix
+
+lassoPC <- glmnet(best.hourly.components, data$cnt)
+aicc_la <- log(deviance(lassoPC) / n) + (2 * lassoPC$df) / (n - lassoPC$df - 1)
+par(mfrow = c(1,2))
+plot(aic_vec, pch = 21, bg = "maroon", xlab = "K", ylab = "AICc")
+plot(lassoPC$lambda, aicc_la, pch = 21, bg = "navy", ylab = "AICc")
+
+```
+
+From the other methods of finding the number of factors, the results were suspicious because they all chose PC33 as the most significant. This may look weird because I cleared out the attributes before running the PCA so there isn't much more I can clear but upon closer investigation PC33 basically takes in the hourly effects which is the same as PC6. There is also something weird going on with PC33 as there is a positive relationship between every hthe and rider counts. After considering all the methods and the spreeplot I made in question 1 I decided to stick with PC 1-5 to make the final estimate.
+
+```{r}
+# Reduced based on the Factors I chose in Question 1
+summary(best.regression)
+```
+
+From the regression I find how the PCs correlate to the count of riders and it appears they are all significant.Using the summary of the regression I can make some observation on how mean rider counts depend on the factors found in part 1. A day with one unit of "cooler temperature" (PC1) there will be around -50 mean riders. A day with more "less humidity" there will be around +51 mean riders (PC2). Since PC3 suggests a time that matches the seasonal component of less in the summer, I expect it to reduce the mean riders by 13. For PC 4 I find a unit harshness and windiness of the weather will increase mean rider count by around 21 riders. PC5 suggests a day that is a holiday will result in 10 less mean rider counts.
+
+
+```{r}
+
+# estimating the model with both factors 
+
+maybe_better_reg <- lm(rider_count ~ yr + holiday + weekday + temp +
+                         weathersit + windspeed + humidity +
+                         spring + summer + fall +     
+                           # categorical variables for seasons
+                         oneam + twoam + threeam + fouram + fiveam + sixam + sevenam +
+                         eightam + nineam + tenam + elevenam + noon +
+                         onepm + twopm + threepm + fourpm + fivepm + sixpm + sevenpm +
+                         eightpm + ninepm + tenpm + elevenpm +
+                           # categorical variables for Hours of the Day
+                         pca$PC1 + pca$PC2 +pca$PC3 + pca$PC4 + pca$PC5)
+
+
+# testing if best.regression is the best with an anova test 
+# Ho: best.regression is the best and the untransformed variables are insignificant
+anova(maybe_better_reg, best.regression)
+
+```
+
+Pvalue < 0.05 suggests I reject the null hypothesis and only using the transforemd regressors is not preferred over the model that includes all transformed and untransformed regressors. Thus I may want to include the untransformed regressors as they are significant to rider counts. 
+
+```{r}
+
+# comparing regressors 
+
+xlasso <- cv.glmnet(x = as.matrix(best_data[,-1]), y = rider_count, nfold = 20) 
+# creating the transformed lasso regression to compare with the factorized and transformed regression
+
+xvlasso <- cv.glmnet(x = as.matrix(cbind(best_data[-1], full.pca)), y = rider_count, nfold = 20)
+# creating a lasso that combines the transformed regressors and the transformed
+
+
+# plotting the relationships
+par(mfrow = c(1, 3), mar = c(3.1, 3.1, 5.1, 1.1), mgp = 2:0)
+plot(xlasso, main = "Lasso on X", ylim = c(10300, 11500),     # setting a boundary on the y axis for a closer look
+     ylab = "", xlab = "", bty = "n")
+plot(cvlassoPC, main = "Lasso on V (PCR)", ylim = c(10300, 11500),
+     ylab = "", xlab = "", bty = "n")
+plot(xvlasso, main = "Lasso on X and V", ylim = c(10300, 11500),
+     ylab = "", xlab = "", bty = "n")
+mtext(side = 2, "mean squared error", outer = TRUE, line = 2)
+mtext(side = 1, "log lamba", outer = TRUE, line = 2)
+
+```
+
+A closer look at the plot
+
+```{r}
+
+# taking a closer look
+par(mfrow = c(1, 3), mar = c(3.1, 3.1, 5.1, 1.1), mgp = 2:0)
+plot(xlasso, main = "Lasso on X", ylim = c(10300, 10950),     # setting a boundary on the y axis for a closer look
+     ylab = "", xlab = "", bty = "n")
+plot(cvlassoPC, main = "Lasso on V (PCR)", ylim = c(10300, 10950),
+     ylab = "", xlab = "", bty = "n")
+plot(xvlasso, main = "Lasso on X and V", ylim = c(10300, 10950),
+     ylab = "", xlab = "", bty = "n")
+mtext(side = 2, "mean squared error", outer = TRUE, line = 2)
+mtext(side = 1, "log lamba", outer = TRUE, line = 2)
+
+```
+
+The graphs above shows the relationship between a regression with only untransformed regressors, X, a regression with only transfomed regressors/ PCs, V and a regression with both regressors combined. I can see that the combined model have less variation and error than both the untransformed an transformed model. This suggests that the better model should include both transformed and untransformed regressors.
+
+I know that from the f-test I did that the untransformed regressors are significant to rider counts.
+
+```{r}
+
+# incorporating the seasonal components and taking out insignificant variables
+maybe_better_reg1 <- lm (rider_count ~ yr + 
+                         spring + summer + fall +     
+                           # categorical variables for seasons
+                         oneam + twoam + threeam + fouram + fiveam + sixam + sevenam +
+                         eightam + nineam + tenam + elevenam + noon +
+                         onepm + twopm + threepm + fourpm + fivepm + sixpm + sevenpm +
+                         eightpm + ninepm + tenpm + elevenpm +
+                           # categorical variables for Hours of the Day
+                         pca$PC1 + pca$PC2 + pca$PC3 + pca$PC4 )
+
+# Ho: maybe_better_reg is the best and the variables removed are significant
+anova(maybe_better_reg1, maybe_better_reg)
+
+summary(maybe_better_reg1) # summary of the better model
+
+```
+
+With the anova test, maybe_better_reg1 is preferred, I found that the seasonal and hourly component I included are very significant to the data. PC5 are not significant. Although the summary of the model shows that there are certain hours that are insignificant to the mean rider count, they have to be included because they are categorical variables. The times that appear to be less significant are between 1am- 5am. This issue may be a result of inconclusive data during those times or not enough data. There could also be other interactions between time and season that could be causing this.
+
+The comparison between the new fit and one in part 2 suggests that the new model performs better than the previous estimator. The new model has lower residual standard error and higher adjusted r-squared. When compared to the regression I ran on all the untransformed data, I found the coefficients made more sense and were interpretable.
+
+
+```{r}
+
+# partial least squares [PLS]
+plsreg<- plsr(rider_count ~., data=best_data, method = "oscorespls", validation = "CV", segments = 6)
+summary(plsreg)
+
+# Finding the Min predicted residual error sum of squares [PRESS]
+min_AVGPRESS = which.min(plsreg$validation$PRESS)
+min_AVGPRESS
+
+# PLS CV plot average PRESS
+plot(1:plsreg$ncomp, plsreg$validation$PRESS, type = "b", pch = 20,
+     xlab = "K", ylab = "average PRESS",)
+abline(v = which.min(plsreg$validation$PRESS), lty = 2)
+
+# graphing the fitted values to 13
+pal <- rainbow(13)
+
+par(mfrow = c(1, 3), mar = c(3.1, 3.1, 1.1, 1.1), mgp = 2:0)
+for (k in 1:13) {
+  r2 <- cor(rider_count, plsreg$fitted[, , k])^2
+  
+  plot(rider_count, plsreg$fitted[, , k], pch = 20, col = pal[k],
+       ylab = paste("fitted values with", k, "components"))
+  text(84, 88.5, bquote(R^2 == .(round(r2, 2))))}
+
+```
+
+After plotting the partial least square I find at the minimum average PRESS, R^2 is 0.68 which is very close to the revised model in part 3. 
+
+```{r}
+
+# using partial least squares to model the data
+pls.fit = plsr(rider_count~., data=best_data, scale=TRUE, ncomp=33)
+# The lowest cross-validation error occurs when M=33 PLS directions are used
+summary(pls.fit)
+
+# looking at the rotations from Comp 1 to 9
+pls.fit$projection[,1:9]
+
+# coefficients
+# pls.fit$coefficients
+
+```
+
+I notice that after the 9-component PLS fit, the percentage of variance in rider counts are all 67.96. I get that the determinants of rider counts includes up to 9comps. From looking at the rotations up to 9comps, I see that the values are closer in values compared to the rotations I got from doing the PC analysis, suggesting that each component in this pls is using alot more attributes from the original data. This may result in over fitting. Although the PLS gives a clearer picture of which component to choose to create a model as competitive as the modified "better model", this information doesn't help us explain and interpret the model. I found the rotations created by this method is not as clear. When looking at the coefficients I find that pls does not help us understand the underlying relationships between variables.
+
+
+```{r}
+# observing the humidity effect on rider counts
+
+humidregpc<-lm(rider_count~ pca$PC2) 
+# PC2 addresses the humidity and windy effect on rider_count
+coef(humidregpc)
+
+humidreg <- lm(rider_count~ humidity)
+coef(humidreg)
+
+# testing interactions between humidity and other regressors
+
+humidregtemp <- lm(rider_count~ temp + humidity + temp:humidity) # interactions with temp
+summary(humidregtemp)
+
+```
+
+When looking at the interaction between humidity and temperature I find that given an increase in temperature, an increase in humidity will decrease mean rider count by 20 riders.
+
+Using the best model estimator from combining transformed and untransformed regressors, I included interaction terms to see the causual effect humidity has on riders given other factors:
+
+```{r}
+
+# testing causual effect of humidity on rider counts given other factors from the estimator
+
+# maybe_better_reg1 with interactions on hourly componenet
+humidreg_hrly<-lm (rider_count ~ yr +  
+                                spring + summer + fall + 
+                                # categorical variables for seasons
+                                oneam + twoam + threeam + fouram + fiveam + sixam + sevenam +
+                                eightam + nineam + tenam + elevenam + noon +
+                                onepm + twopm + threepm + fourpm + fivepm + sixpm + sevenpm +
+                                eightpm + ninepm + tenpm + elevenpm + 
+                                # time component 
+                                pca$PC1 + pca$PC2 + pca$PC3 + pca$PC4 +
+                                # transformed component
+                                
+                                # interaction variables
+                                + humidity +
+
+                                oneam:humidity + twoam:humidity + threeam:humidity + 
+                                fouram:humidity + fiveam:humidity + sixam:humidity + 
+                                sevenam: humidity + eightam:humidity + nineam:humidity + 
+                                tenam:humidity + elevenam:humidity + noon:humidity +
+                                onepm:humidity + twopm:humidity + threepm:humidity + fourpm:humidity + 
+                                fivepm:humidity + sixpm:humidity + sevenpm:humidity +
+                                eightpm:humidity + ninepm:humidity + tenpm:humidity + elevenpm:humidity )
+
+summary(humidreg_hrly)
+
+```
+
+
+By looking at the coefficients of the interaction variables, I can see a causual effect of humidity on rider counts given the hour: The coefficients tell us that at 12am, a unit of humidity would increase the number of mean rider count by 7 riders. During the times 1am - 6am, 8am, 11am - 8pm, the effects humidity has on mean rider count would decrease relative to 7 riders. During the times 7am, 9am, 10am, 9pm-11pm, the effects of humidity on rider count will increase relative to 7 riders. 
+
+```{r}
+
+# maybe_better_reg1 with interactions on seasons
+humidregseason<-lm (rider_count ~ yr +  
+                                spring + summer + fall + 
+                                # categorical variables for seasons
+                                oneam + twoam + threeam + fouram + fiveam + sixam + sevenam +
+                                eightam + nineam + tenam + elevenam + noon +
+                                onepm + twopm + threepm + fourpm + fivepm + sixpm + sevenpm +
+                                eightpm + ninepm + tenpm + elevenpm + 
+                                # time component 
+                                pca$PC1 + pca$PC2 + pca$PC3 + pca$PC4 +
+                                # transformed component
+                                
+                                # interaction variables
+                                + humidity +
+                                
+                                spring:humidity + summer:humidity + fall: humidity )
+
+summary(humidregseason)
+
+```
+
+Humidity on rider counts given the season looks more intuiative. From looking at the coefficients of the interaction variables, I see that at winter, the effects of humidity on mean rider counts is -9 riders per unit humidity. During the spring time, the effects of humidity on mean rider count increases by 29 so instead of -9, the mean rider count is expected to rise by 20 riders for every increase of unit humidiy. The interaction variables suggests that a unit rise in humidity will result in less mean rider counts for all seasons but spring. 
+
+```{r}
+
+# maybe_better_reg1 with interactions on PC1
+humidregPC1 <-lm (rider_count ~ yr +  # maybe_better_reg1 interaction model
+                                spring + summer + fall + 
+                                # categorical variables for seasons
+                                oneam + twoam + threeam + fouram + fiveam + sixam + sevenam +
+                                eightam + nineam + tenam + elevenam + noon +
+                                onepm + twopm + threepm + fourpm + fivepm + sixpm + sevenpm +
+                                eightpm + ninepm + tenpm + elevenpm + 
+                                # time component 
+                                pca$PC1 + pca$PC2 + pca$PC3 + pca$PC4 +
+                                # transformed component
+                                
+                                # interaction variables
+                                humidity:pca$PC1 )
+
+summary(humidregPC1)
+        
+```
+
+Here I see for every unit increase in "cooler weather", the effects of humidity on mean rider counts is 7 more mean riders for each unit increase of humidity. 
+
+```{r}
+
+# maybe_better_reg1 with interactions on PC2
+humidregPC2 <-lm (rider_count ~ yr +  # maybe_better_reg1 interaction model
+                                spring + summer + fall + 
+                                # categorical variables for seasons
+                                oneam + twoam + threeam + fouram + fiveam + sixam + sevenam +
+                                eightam + nineam + tenam + elevenam + noon +
+                                onepm + twopm + threepm + fourpm + fivepm + sixpm + sevenpm +
+                                eightpm + ninepm + tenpm + elevenpm + 
+                                # time component 
+                                pca$PC1 + pca$PC2 + pca$PC3 + pca$PC4 +
+                                # transformed component
+                                
+                                # interaction variables
+                                humidity:pca$PC2 )
+
+summary(humidregPC2)
+
+```
+
+Here I see for every unit increase in "humid weather", the effects of humidity on mean rider counts is 2 more mean riders for each unit increase of humidity. 
+
+```{r}
+
+# maybe_better_reg1 with interactions on PC3
+humidregpc3 <-lm (rider_count ~ yr +  # maybe_better_reg1 interaction model
+                                spring + summer + fall + 
+                                # categorical variables for seasons
+                                oneam + twoam + threeam + fouram + fiveam + sixam + sevenam +
+                                eightam + nineam + tenam + elevenam + noon +
+                                onepm + twopm + threepm + fourpm + fivepm + sixpm + sevenpm +
+                                eightpm + ninepm + tenpm + elevenpm + 
+                                # time component 
+                                pca$PC1 + pca$PC2 + pca$PC3 + pca$PC4 +
+                                # transformed component
+                                
+                                # interaction variables
+                                humidity:pca$PC3 )
+
+summary(humidregpc3)
+
+```
+
+Here I see for every unit increase in "not summer", the effects of humidity on mean rider counts is 5 more mean riders for each unit increase of humidity. 
+
+```{r}
+
+# maybe_better_reg1 with interactions on PC4
+humidregPC4 <-lm (rider_count ~ yr +  # maybe_better_reg1 interaction model
+                                spring + summer + fall + 
+                                # categorical variables for seasons
+                                oneam + twoam + threeam + fouram + fiveam + sixam + sevenam +
+                                eightam + nineam + tenam + elevenam + noon +
+                                onepm + twopm + threepm + fourpm + fivepm + sixpm + sevenpm +
+                                eightpm + ninepm + tenpm + elevenpm + 
+                                # time component 
+                                pca$PC1 + pca$PC2 + pca$PC3 + pca$PC4 +
+                                # transformed component
+                                
+                                # interaction variables
+                                humidity:pca$PC4 )
+
+summary(humidregPC4)
+
+```
+Here I see for every unit increase in "harsher weather", the effects of humidity on mean rider counts is 1 less mean riders for each unit increase of humidity. 
